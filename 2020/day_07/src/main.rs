@@ -7,11 +7,11 @@ enum TokenType<'src> {
     Number(&'src str),
     Unknown(&'src str),
     Contain,
-    Bag,
     Comma,
     Dot,
     Ignored,
-    EOL,
+    Eol,
+
 }
 struct Rule<'src> {
     src: &'src [u8],
@@ -36,10 +36,7 @@ impl<'src> Rule<'src> {
                 _ => {
                     match &self.src[start_pos..self.position] {
                         b"contain" => return Some(TokenType::Contain),
-                        b"bag" => return Some(TokenType::Bag),
-                        b"bags" => return Some(TokenType::Bag),
-                        b"no" => return Some(TokenType::Ignored),
-                        b"other" => return Some(TokenType::Ignored),
+                        b"bag" | b"bags" | b"no" | b"other" => return Some(TokenType::Ignored),
                         _ => return Some(TokenType::Word(std::str::from_utf8(&self.src[start_pos..self.position]).unwrap())),
                     }
                 },
@@ -50,11 +47,8 @@ impl<'src> Rule<'src> {
     fn consume_space(&mut self) {
         self.position += 1;
 
-        loop {
-            match self.src[self.position] {
-                b' ' => self.position += 1,
-                _ => break,
-            }
+        while let b' ' = self.src[self.position] {
+            self.position += 1;
         }
     }
 
@@ -79,10 +73,13 @@ impl<'src> Rule<'src> {
         self.position += 1;
         Some(TokenType::Dot)
     }
+}
 
-    fn advance(&mut self) -> Option<TokenType<'src>> {
+impl<'src> Iterator for Rule<'src> {
+    type Item = TokenType<'src>;
+    fn next(&mut self) -> Option<Self::Item> {
         if self.position >= self.src.len() {
-            return Some(TokenType::EOL);
+            return Some(TokenType::Eol);
         }
 
         if self.src[self.position] == b' ' {
@@ -101,21 +98,21 @@ impl<'src> Rule<'src> {
 
 fn investigate_bag(bag: &Bag, bag_pool: &collections::HashMap<String, Bag>) -> bool {
 
-    if bag.nodes.is_none() {
-        return false;
-    }
+    if bag.nodes.is_some() {
+        let nodes = bag.nodes.as_ref().unwrap();
+        if nodes.contains_key("shiny gold") {
+            return true;
+        } 
 
-    if bag.nodes.as_ref().unwrap().contains_key("shiny gold") {
-        return true;
-    } else {
-        for (key, _) in bag.nodes.as_ref().unwrap() {
-            if investigate_bag(bag_pool.get(key).unwrap(), &bag_pool) {
+        //TODO: Could we flatten this code to not be recursive ?
+        for key in nodes.keys() {
+            if investigate_bag(bag_pool.get(key).unwrap(), bag_pool) {
                 return true;
             }
         }
     }
 
-    return false;
+    false
 }
 
 fn count_bags(current_bag: &Bag, bag_pool: &collections::HashMap<String, Bag>) -> usize {
@@ -126,7 +123,7 @@ fn count_bags(current_bag: &Bag, bag_pool: &collections::HashMap<String, Bag>) -
         count += amount * count_bags(next_bag, bag_pool);
     }
 
-    return count;
+    count
 }
 
 fn main() {
@@ -160,22 +157,16 @@ impl<'src> Parser<'src> {
     }
 
     fn pop_token(&mut self) {
-        self.top_token = self.rule.advance();
+        self.top_token = self.rule.next();
     }
 
     fn parse_color(&mut self) -> String {
         let mut color_name = String::from("");
-        loop {
-            match self.top_token {
-                Some(TokenType::Word(ident)) => {
-                    color_name.push_str(ident); 
-                    color_name.push_str(" ");
-                    self.pop_token()
-                }
-                _ => break, 
-            }
+        while let Some(TokenType::Word(ident)) = self.top_token {
+            color_name.push_str(ident);
+            color_name.push(' ');
+            self.pop_token();
         }
-
         color_name.trim().to_string()
     }
 
@@ -211,7 +202,7 @@ impl<'src> Parser<'src> {
     }
 
     fn parse(&mut self, bags: &mut collections::HashMap<String, Bag>) {
-        self.top_token = self.rule.advance();
+        self.top_token = self.rule.next();
 
         let mut main_bag = Bag {
             color: String::new(),
@@ -231,7 +222,7 @@ impl<'src> Parser<'src> {
                 Some(TokenType::Number(_)) => {
                     let result = self.parse_bag();
                     main_bag.count += result.count;
-                    main_bag.nodes.as_mut().unwrap().insert(result.color.clone(), result.count);
+                    main_bag.nodes.as_mut().unwrap().insert(result.color, result.count);
                 }
 
                 Some(TokenType::Contain) => {
@@ -240,7 +231,7 @@ impl<'src> Parser<'src> {
                     if let Some(TokenType::Number(_)) = self.top_token {
                         let result = self.parse_bag();
                         main_bag.count += result.count;
-                        main_bag.nodes.as_mut().unwrap().insert(result.color.clone(), result.count);
+                        main_bag.nodes.as_mut().unwrap().insert(result.color, result.count);
                     }
                 }
 
@@ -248,14 +239,14 @@ impl<'src> Parser<'src> {
                     self.pop_token();
                     let result = self.parse_bag();
                     main_bag.count += result.count;
-                    main_bag.nodes.as_mut().unwrap().insert(result.color.clone(), result.count);
+                    main_bag.nodes.as_mut().unwrap().insert(result.color, result.count);
                 }
 
                 Some(TokenType::Dot) => {
                     self.pop_token();
                 }
 
-                Some(TokenType::EOL) => break,
+                Some(TokenType::Eol) => break,
                 _ => self.pop_token(),
             }
 
